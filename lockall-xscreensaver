@@ -1,0 +1,111 @@
+#!/usr/bin/env -iS python3
+# vim: syntax=python
+#
+# Copyright 2024 Wolfgang 'datenwolf' Draxinger
+# 
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+# 
+# 1. Redistributions of source code must retain the above copyright notice, this
+# list of conditions and the following disclaimer.
+# 
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+# this list of conditions and the following disclaimer in the documentation
+# and/or other materials provided with the distribution.
+# 
+# 3. Neither the name of the copyright holder nor the names of its contributors
+# may be used to endorse or promote products derived from this software without
+# specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""lockall-xscreensaver
+Issue `xscreensaver-command -lock` to all instances of xscreensaver
+running on the host it's executed on, to which the user running this
+script has permissions to access:
+
+- If run as root, it will reach each and every instance of xscreensaver
+
+- If run as a regular user, it will lock every xscreensaver of which this
+  user can hold of the associated `XAUTHORITY` file, or if the host was
+  added to the X server's host access list.
+
+(C) 2024 Wolfgang 'datenwolf' Draxinger -- SPDX BSD-3-Clause 
+"""
+
+def procargs(pid):
+	cmdline_fil = open(f'/proc/{pid}/cmdline', 'r')
+	cmdline = cmdline_fil.read()
+	cmdline_fil.close()
+	return cmdline.split('\0')
+
+def procenv_display_xauth(pid):
+	environ_fil = open(f'/proc/{pid}/environ', 'r')
+	environ = environ_fil.read()
+	environ_fil.close()
+	environ = {k:v for k,v in [tuple(v.split('=',1)) for v in environ.split('\0') if len(v)]}
+	display = None
+	args = procargs(pid)
+	if '--display' in args:
+		display = args[args.index('--display')+1]
+	if not display:
+		display = environ['DISPLAY'] if 'DISPLAY' in environ else None
+	xauth = environ['XAUTHORITY'] if 'XAUTHORITY' in environ else None
+	return display, xauth
+
+def xorgargs_display_auth(args):
+	display, auth = None, None
+	for a in args:
+		if a.startswith(':'):
+			display = a
+			break
+	if '-auth' in args:
+		auth = args[args.index('-auth')+1]
+	return display, auth
+
+def main(argv):
+	import os, pwd, subprocess
+	xorg_auth = {}
+	xscreensaver_displays = []
+
+	for pid in os.listdir('/proc'):
+		if pid.isdigit():
+			try:
+				exe = os.readlink(f'/proc/{pid}/exe')
+			except:
+				continue
+			if exe.endswith('Xorg'):
+				display,auth = xorgargs_display_auth( procargs(pid) )
+				xorg_auth[display] = auth
+				continue
+			if exe.endswith('xscreensaver'):
+				xscreensaver_displays.append(procenv_display_xauth(pid))
+				continue
+
+	for display,xauth in xscreensaver_displays:
+		if not display:
+			continue
+
+		if not xauth and display in xorg_auth:
+			xauth = xorg_auth[display]
+
+		env = {'DISPLAY': display}
+		if xauth:
+			env['XAUTHORITY'] = xauth
+		elif 0 != os.geteuid():
+			env['HOME'] = pwd.getpwuid(os.geteuid()).pw_dir
+		
+		subprocess.run(['xscreensaver-command', '--display', display, '--lock'], env=env)
+		subprocess.run(['xset', '-display', display, 'dpms', 'force', 'off'], env=env)
+
+if __name__ == '__main__':
+	import sys
+	main(sys.argv)

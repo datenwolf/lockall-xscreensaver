@@ -1,0 +1,11 @@
+Issue `xscreensaver-command -lock` to all instances of xscreensaver
+running on the host it's executed on, to which the user running this
+script has permissions to access:
+
+- If run as root, it will reach each and every instance of xscreensaver
+
+- If run as a regular user, it will lock every xscreensaver of which this
+  user can hold of the associated `XAUTHORITY` file, or if the host was
+  added to the X server's host access list.
+
+(C) 2024 Wolfgang 'datenwolf' Draxinger -- SPDX BSD-3-Clause 
